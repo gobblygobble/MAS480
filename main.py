@@ -9,13 +9,13 @@ from torch.autograd import Variable
 import matplotlib.pyplot as plt
 from PIL import Image
 from torch.utils.data import DataLoader
-from torchvision.transforms import Compose, CenterCrop, Normalize
+from torchvision.transforms import Compose, CenterCrop, Normalize, FiveCrop, RandomCrop
 from torchvision.transforms import ToTensor, ToPILImage
 from torchvision.utils import make_grid
 ## IMPORT MY LIBRARIES
-# for early stopping with metrics
 # network definitions
 import unet
+# for early stopping with metrics
 import metrics
 # others
 from argparse import ArgumentParser
@@ -39,10 +39,15 @@ target_transform = Compose([
     Relabel(255, 21),
 ])
 '''
-target_transform = Compose([
-    CenterCrop(256),
+input_transform = Compose([
+    RandomCrop(256), # 256x256 cropped image
     ToTensor(),
-    Normalize((0),(1/256))
+    Normalize([.485, .456, .406], [.229, .224, .225]), # mean, std for each channels
+])
+target_transform = Compose([
+    RandomCrop(256), # 256x256 cropped image
+    ToLabel(),
+    Relabel(255, 21),
 ])
 '''
 cmap = colormap(NUM_CLASSES)[:, np.newaxis, :]
@@ -72,6 +77,7 @@ def train(args, model):
     # start training - epoch values start from 1 to make numbers look 'pretty'
     for epoch in range(1, args.num_epochs + 1):
         epoch_loss = []
+        print(len(train_loader))
         for step, (images, labels) in enumerate(train_loader):
             if args.cuda:
                 images = images.cuda()
@@ -129,8 +135,8 @@ def train(args, model):
                 plt.axis('off')
                 plt.title('Label')
                 '''
-        # every epoch, check validation data's accuracy
-        v_loss_list = []
+        # every epoch, check validation data's accuracy 
+        v_list = []
         for _, (v_images, v_labels) in enumerate(val_loader):
             if args.cuda:
                 v_images = v_images.cuda()
@@ -138,10 +144,17 @@ def train(args, model):
             v_inputs = Variable(v_images)
             v_targets = Variable(v_labels)
             v_outputs = model(v_inputs)
-            v_loss = criterion(v_outputs, v_targets[:, 0])
-            v_loss_list.append(v_loss.item())
-        v_average = sum(v_loss_list) / len(v_loss_list)
-        print(f'validation loss: {v_average} (epoch {epoch})')
+            # using cross-entropy loss
+            # v_loss = criterion(v_outputs, v_targets[:, 0])
+            # v_list.append(v_loss.item())    
+            # for IoU metric
+            _, v_l = torch.max(v_outputs, dim=1)
+            v_score = metrics.get_iou(labels=v_l, target=v_targets[:, 0])
+            v_list.append(v_score)
+        v_average = sum(v_list) / len(v_list)
+        print(f'validation average IoU: {v_average} (epoch {epoch})')
+        # v_average = sum(v_list) / len(v_list)
+        # print(f'validation loss: {v_average} (epoch {epoch})')
 
 ## evaluation
 def evaluate(args, model):
