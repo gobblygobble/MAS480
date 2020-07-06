@@ -29,7 +29,9 @@ class Attention_block(nn.Module):
         # in our example, F_g and F_x should always be same
         # and F_int is always half of F_g (or F_x)
         assert F_g == F_x
-        F_int = F_g / 2
+        #F_g = int(F_g)
+        #F_x = int(F_x)
+        F_int = F_g // 2
         # for block W_g
         self.W_g_conv = nn.Conv2d(in_channels=F_g, out_channels=F_int,
                                   kernel_size=1, padding=0, bias=False)
@@ -57,7 +59,7 @@ class Attention_block(nn.Module):
         next_x = self.W_x_conv(x)
         next_x = self.W_x_batchnorm(next_x)
         # rest of the blocks - in order
-        relu = self.ReLU(next_g + next_x)
+        relu = self.relu(next_g + next_x)
         next_psi = self.psi_conv(relu)
         #next_psi = self.psi_batchnorm(next_psi)
         alpha = self.sigmoid(next_psi)
