@@ -11,18 +11,21 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from torchvision.transforms import Compose, CenterCrop, Normalize
 from torchvision.transforms import ToTensor, ToPILImage
+from torchvision.utils import make_grid
+## IMPORT MY LIBRARIES
+# for early stopping with metrics
+# network definitions
+import unet
+import metrics
 # others
 from argparse import ArgumentParser
 from dataset import VOC12
 from criterion import CrossEntropyLoss2d
-from transform import Relabel, ToLabel, Colorize
-#from unet import Unet
-import unet
-#from attention_unet import AttentionUnet
+from transform import Relabel, ToLabel, Colorize, colormap
 # variables - fixed for VOC2012 data set
 NUM_CHANNELS = 3
 NUM_CLASSES = 22
-
+# image transforms
 color_transform = Colorize()
 image_transform = ToPILImage()
 input_transform = Compose([
@@ -35,6 +38,14 @@ target_transform = Compose([
     ToLabel(),
     Relabel(255, 21),
 ])
+'''
+target_transform = Compose([
+    CenterCrop(256),
+    ToTensor(),
+    Normalize((0),(1/256))
+])
+'''
+cmap = colormap(NUM_CLASSES)[:, np.newaxis, :]
 
 ## training
 def train(args, model):
@@ -43,12 +54,17 @@ def train(args, model):
     # prepare criterion
     weight = torch.ones(22)
     weight[0] = 0
-    # load data - even though Python notebook doesn't really support CLI arguments,
-    # attributes in args will be assigned manually when calling main() function
-    loader = DataLoader(VOC12(args.datadir, input_transform, target_transform),
-        num_workers=args.num_workers, batch_size=args.batch_size, shuffle=True)
+    train_loader = DataLoader(
+                            VOC12(root=args.datadir, train=True, input_transform=input_transform,
+                                  target_transform=target_transform),
+                            num_workers=args.num_workers, batch_size=args.batch_size, shuffle=False)
+    val_loader = DataLoader(
+                            VOC12(root=args.datadir, train=False,input_transform=input_transform,
+                                  target_transform=target_transform),
+                            num_workers=args.num_workers, batch_size=args.batch_size, shuffle=False)
     # use Adam optimizer
     optimizer = Adam(model.parameters())
+    # for loss calculation, we still use CrossEntropyLoss
     if args.cuda:
         criterion = CrossEntropyLoss2d(weight.cuda())
     else:
@@ -56,7 +72,7 @@ def train(args, model):
     # start training - epoch values start from 1 to make numbers look 'pretty'
     for epoch in range(1, args.num_epochs + 1):
         epoch_loss = []
-        for step, (images, labels) in enumerate(loader):
+        for step, (images, labels) in enumerate(train_loader):
             if args.cuda:
                 images = images.cuda()
                 labels = labels.cuda()
@@ -69,18 +85,63 @@ def train(args, model):
             loss.backward()
             optimizer.step()
 
-            #epoch_loss.append(loss.data[0])
             epoch_loss.append(loss.item())
             if (args.steps_loss > 0) and (step % args.steps_loss == 0):
+                # print loss
                 average = sum(epoch_loss) / len(epoch_loss)
                 print(f'loss: {average} (epoch {epoch}, step {step})')
+
+                # check for early stop
+                if metrics.early_stop(use_cuda=args.cuda, output=outputs, target=targets[:, 0], metric="iou", threshold=0.8):
+                    # if we can stop early, save model and exit
+                    print("Early stopping score exceeded threshold... saving model and ending training stage")
+                    if args.attention:
+                        filename = f'models/AttentionUNet-EarlyStop-{epoch:03}-{step:04}.pth'
+                    else:
+                        filename = f'models/UNet-EarlyStop-{epoch:03}-{step:04}.pth'
+                    torch.save(model.state_dict(), filename)
+                    return
             if (args.steps_save > 0) and (step % args.steps_save == 0):
                 if args.attention:
-                    filename = f'AttentionUNet-{epoch:03}-{step:04}.pth'
+                    filename = f'models/AttentionUNet-{epoch:03}-{step:04}.pth'
                 else:
-                    filename = f'UNet-{epoch:03}-{step:04}.pth'
+                    filename = f'models/UNet-{epoch:03}-{step:04}.pth'
                 torch.save(model.state_dict(), filename)
                 print(f'save: {filename} (epoch: {epoch}, step: {step})')
+                ''' printing out pictures doesn't work on VScode :(
+                _, outputs = torch.max(outputs, dim=1)
+                #print(outputs.shape)
+                outputs = outputs.unsqueeze(1)
+                #print(outputs.shape)
+                # show images
+                plt.subplot(211)
+                plt.imshow(make_grid(images.cpu()).permute(1,2,0).numpy())
+                plt.axis('off')
+                plt.title('Images')
+                # print labels
+                plt.subplot(212)
+                outputs = outputs.cpu().numpy()[:, :, :, :, np.newaxis]
+                color_Label = np.dot(outputs == 0, cmap[0])
+                for i in range(1, cmap.shape[0]):
+                    color_Label += np.dot(outputs == i, cmap[i])
+                color_Label = color_Label.swapaxes(1,4)
+                plt.imshow((make_grid(torch.tensor(color_Label.squeeze())).permute(1,2,0).numpy()).astype('uint8'))
+                plt.axis('off')
+                plt.title('Label')
+                '''
+        # every epoch, check validation data's accuracy
+        for _, (v_images, v_labels) in enumerate(val_loader):
+            v_loss_list = []
+            if args.cuda:
+                v_images = v_images.cuda()
+                v_labels = v_labels.cuda()
+            v_inputs = Variable(v_images)
+            v_targets = Variable(v_labels)
+            v_outputs = model(v_inputs)
+            v_loss = criterion(v_outputs, v_targets[:, 0])
+            v_loss_list.append(v_loss.item())
+        v_average = sum(v_loss_list) / len(v_loss_list)
+        print(f'validation loss: {v_average} (epoch {epoch})')
 
 ## evaluation
 def evaluate(args, model):
@@ -96,12 +157,10 @@ def evaluate(args, model):
 def main(args):
     # load correct model
     if args.attention == True:
-        raise NotImplementedError
-        #model = AttentionUnet()
+        model = unet.AttentionUnet(in_channels=NUM_CHANNELS,out_channels=NUM_CLASSES)
     elif args.attention == False:
         # we don't use residual for non-denoising purposes
-        model = unet.Unet(in_channels=NUM_CHANNELS,out_channels=NUM_CLASSES
-                          ,use_residual=False, use_norm=True)
+        model = unet.Unet(in_channels=NUM_CHANNELS,out_channels=NUM_CLASSES)
     # check if we use GPU
     if args.cuda:
         model = model.cuda()
@@ -131,16 +190,20 @@ if __name__ == '__main__':
     parser_train.add_argument('--datadir', required=True)
     parser_train.add_argument('--num-epochs', type=int, default=32)
     parser_train.add_argument('--num-workers', type=int, default=4)
-    parser_train.add_argument('--batch-size', type=int, default=1)
-    parser_train.add_argument('--steps-loss', type=int, default=50)
+    parser_train.add_argument('--batch-size', type=int, default=4)
+    parser_train.add_argument('--steps-loss', type=int, default=250)
     #parser_train.add_argument('--steps-plot', type=int, default=0)
     parser_train.add_argument('--steps-save', type=int, default=500)
+    ''' This part is only for Jupyter Python Notebook
     # since we can't pass CLI arugments in Python notebook,
     # assign variables manually
     # add two spaces between each chunk so that the data directory doesn't get split
     #command_line = "--cuda  train  --datadir  gdrive/My Drive/Project/data  --num-epochs  1  --num-workers  4  --batch-size  4  --steps-save  500"
     #command_line = "--cuda  train  --datadir  data  --num-epochs  1  --num-workers  4  --batch-size  4  --steps-save  500"
-    command_line = "train  --datadir  data  --num-epochs  1  --num-workers  4  --batch-size  4  --steps-save  500"
+    #command_line = "train  --datadir  data  --num-epochs  1  --num-workers  4  --batch-size  4  --steps-save  500"
     args = parser.parse_args(command_line.split("  "))
     print(args)
+    '''
+    # an example would be python main.py --cuda --attention train --datadir data --num-epochs 320
+    args = parser.parse_args()
     main(args)
