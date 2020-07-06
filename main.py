@@ -130,8 +130,8 @@ def train(args, model):
                 plt.title('Label')
                 '''
         # every epoch, check validation data's accuracy
+        v_loss_list = []
         for _, (v_images, v_labels) in enumerate(val_loader):
-            v_loss_list = []
             if args.cuda:
                 v_images = v_images.cuda()
                 v_labels = v_labels.cuda()
