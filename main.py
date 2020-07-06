@@ -139,7 +139,8 @@ if __name__ == '__main__':
     # assign variables manually
     # add two spaces between each chunk so that the data directory doesn't get split
     #command_line = "--cuda  train  --datadir  gdrive/My Drive/Project/data  --num-epochs  1  --num-workers  4  --batch-size  4  --steps-save  500"
-    command_line = "--cuda  train  --datadir  data  --num-epochs  1  --num-workers  4  --batch-size  4  --steps-save  500"
+    #command_line = "--cuda  train  --datadir  data  --num-epochs  1  --num-workers  4  --batch-size  4  --steps-save  500"
+    command_line = "train  --datadir  data  --num-epochs  1  --num-workers  4  --batch-size  4  --steps-save  500"
     args = parser.parse_args(command_line.split("  "))
     print(args)
     main(args)
