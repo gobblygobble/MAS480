@@ -4,6 +4,6 @@
 KAIST BiS400 Special Topics in Bio and Brain Engineering<Advanced Intelligence> / MAS480 Topics in Mathematics<Advanced Intelligence>
 
 
-Final Project - Image Segmentation using U-net & Attention U-Net
+Final Project - Image Segmentation using U-Net & Attention U-Net
 
 Copyright © Jinha Chung, KAIST School of Electrical Engineering
